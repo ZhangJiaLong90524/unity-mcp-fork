@@ -342,16 +342,58 @@ namespace MCPForUnity.Editor.Services
         {
             string url = HttpEndpointUtility.GetRemoteBaseUrl();
             McpLog.Info($"Connecting to {url}…");
-            bool started = await MCPServiceLocator.Bridge.StartAsync();
-            if (started)
+            if (await MCPServiceLocator.Bridge.StartAsync())
             {
                 McpLog.Info("Connected");
                 MCPForUnityEditorWindow.RequestHealthVerification();
+                return;
             }
-            else
+
+            McpLog.Warn("Connection failed: could not connect to remote HTTP server; retrying in background");
+
+            // The remote server may come up after the editor; unlike HTTP Local there is no
+            // launch process to watch, so keep retrying until connected or the user intervenes.
+            for (int retryIndex = 0; ; retryIndex++)
             {
-                McpLog.Warn("Connection failed: could not connect to remote HTTP server");
+                try { await Task.Delay(GetRetryDelay(retryIndex)); }
+                catch { return; }
+
+                if (!ShouldKeepRetrying()) return;
+
+                if (await MCPServiceLocator.Bridge.StartAsync())
+                {
+                    McpLog.Info("Connected");
+                    MCPForUnityEditorWindow.RequestHealthVerification();
+                    return;
+                }
+
+                McpLog.Debug($"[HTTP Auto-Start] Retry {retryIndex + 1} could not connect to {url}");
             }
         }
+
+        // Mirrors WebSocketTransportClient's reconnect schedule minus its leading zero (the
+        // initial attempt has already run), then holds at the last step.
+        private static readonly TimeSpan[] RetrySchedule =
+        {
+            TimeSpan.FromSeconds(1),
+            TimeSpan.FromSeconds(3),
+            TimeSpan.FromSeconds(5),
+            TimeSpan.FromSeconds(10),
+            TimeSpan.FromSeconds(30),
+        };
+
+        internal static TimeSpan GetRetryDelay(int retryIndex) =>
+            RetrySchedule[Math.Min(Math.Max(retryIndex, 0), RetrySchedule.Length - 1)];
+
+        /// <summary>
+        /// False once the user disables auto-start, leaves HTTP Remote, the bridge is already
+        /// running, or a manual connection action cleared the pending key.
+        /// </summary>
+        internal static bool ShouldKeepRetrying() =>
+            EditorPrefs.GetBool(EditorPrefKeys.AutoStartOnLoad, false)
+            && EditorConfigurationCache.Instance.UseHttpTransport
+            && HttpEndpointUtility.IsRemoteScope()
+            && !MCPServiceLocator.TransportManager.IsRunning(TransportMode.Http)
+            && SessionState.GetBool(ConnectPendingKey, false);
     }
 }

@@ -23,6 +23,8 @@ namespace MCPForUnityTests.Editor.Services
         private bool _savedResumeFlag;
         private bool _savedAutoStart;
         private bool _savedUseHttpTransport;
+        private bool _hadScope;
+        private string _savedScope;
 
         [SetUp]
         public void SetUp()
@@ -32,6 +34,8 @@ namespace MCPForUnityTests.Editor.Services
             _savedResumeFlag = SessionState.GetBool(HttpBridgeReloadHandler.ResumeSessionKey, false);
             _savedAutoStart = EditorPrefs.GetBool(EditorPrefKeys.AutoStartOnLoad, false);
             _savedUseHttpTransport = EditorPrefs.GetBool(EditorPrefKeys.UseHttpTransport, true);
+            _hadScope = EditorPrefs.HasKey(EditorPrefKeys.HttpTransportScope);
+            _savedScope = EditorPrefs.GetString(EditorPrefKeys.HttpTransportScope, string.Empty);
             _savedManager = MCPServiceLocator.TransportManager;
 
             SessionState.EraseBool(HttpAutoStartHandler.SessionInitKey);
@@ -56,6 +60,10 @@ namespace MCPForUnityTests.Editor.Services
             SessionState.SetBool(HttpBridgeReloadHandler.ResumeSessionKey, _savedResumeFlag);
             EditorPrefs.SetBool(EditorPrefKeys.AutoStartOnLoad, _savedAutoStart);
             EditorPrefs.SetBool(EditorPrefKeys.UseHttpTransport, _savedUseHttpTransport);
+            if (_hadScope)
+                EditorPrefs.SetString(EditorPrefKeys.HttpTransportScope, _savedScope);
+            else
+                EditorPrefs.DeleteKey(EditorPrefKeys.HttpTransportScope);
             EditorConfigurationCache.Instance.Refresh();
             MCPServiceLocator.Register(_savedManager);
         }
@@ -189,6 +197,84 @@ namespace MCPForUnityTests.Editor.Services
             Assert.IsTrue(HttpAutoStartHandler.TryBeginReconnect());
             Assert.IsFalse(ConnectPendingSet);
             Assert.AreEqual(1, _fakeClient.StartCalls, "an already-running bridge must not be restarted");
+        }
+
+        [TestCase(0, 1)]
+        [TestCase(1, 3)]
+        [TestCase(2, 5)]
+        [TestCase(3, 10)]
+        [TestCase(4, 30)]
+        [TestCase(5, 30)]
+        [TestCase(100, 30)]
+        public void GetRetryDelay_FollowsReconnectScheduleThenHoldsAtThirtySeconds(int retryIndex, int expectedSeconds)
+        {
+            Assert.AreEqual(
+                System.TimeSpan.FromSeconds(expectedSeconds),
+                HttpAutoStartHandler.GetRetryDelay(retryIndex));
+        }
+
+        private static void ArrangeRemoteRetryInFlight()
+        {
+            EditorPrefs.SetBool(EditorPrefKeys.AutoStartOnLoad, true);
+            EditorPrefs.SetBool(EditorPrefKeys.UseHttpTransport, true);
+            EditorConfigurationCache.Instance.Refresh();
+            EditorConfigurationCache.Instance.SetHttpTransportScope("remote");
+            SessionState.SetBool(HttpAutoStartHandler.ConnectPendingKey, true);
+        }
+
+        [Test]
+        public void ShouldKeepRetrying_AllConditionsHold_ReturnsTrue()
+        {
+            ArrangeRemoteRetryInFlight();
+
+            Assert.IsTrue(HttpAutoStartHandler.ShouldKeepRetrying());
+        }
+
+        [Test]
+        public void ShouldKeepRetrying_AutoStartDisabled_ReturnsFalse()
+        {
+            ArrangeRemoteRetryInFlight();
+            EditorPrefs.SetBool(EditorPrefKeys.AutoStartOnLoad, false);
+
+            Assert.IsFalse(HttpAutoStartHandler.ShouldKeepRetrying());
+        }
+
+        [Test]
+        public void ShouldKeepRetrying_StdioSelected_ReturnsFalse()
+        {
+            ArrangeRemoteRetryInFlight();
+            EditorPrefs.SetBool(EditorPrefKeys.UseHttpTransport, false);
+            EditorConfigurationCache.Instance.Refresh();
+
+            Assert.IsFalse(HttpAutoStartHandler.ShouldKeepRetrying());
+        }
+
+        [Test]
+        public void ShouldKeepRetrying_SwitchedToHttpLocal_ReturnsFalse()
+        {
+            ArrangeRemoteRetryInFlight();
+            EditorConfigurationCache.Instance.SetHttpTransportScope("local");
+
+            Assert.IsFalse(HttpAutoStartHandler.ShouldKeepRetrying());
+        }
+
+        [Test]
+        public void ShouldKeepRetrying_BridgeAlreadyRunning_ReturnsFalse()
+        {
+            ArrangeRemoteRetryInFlight();
+            var start = MCPServiceLocator.TransportManager.StartAsync(TransportMode.Http);
+            Assert.IsTrue(start.IsCompleted && start.Result, "fake bridge should start synchronously");
+
+            Assert.IsFalse(HttpAutoStartHandler.ShouldKeepRetrying());
+        }
+
+        [Test]
+        public void ShouldKeepRetrying_UserTookManualControl_ReturnsFalse()
+        {
+            ArrangeRemoteRetryInFlight();
+            HttpAutoStartHandler.CancelPendingReconnect();
+
+            Assert.IsFalse(HttpAutoStartHandler.ShouldKeepRetrying());
         }
     }
 }
