@@ -82,7 +82,59 @@ namespace MCPForUnity.Editor.Helpers
         public static string GetProjectName()
         {
             EnsureIdentityCache();
-            return _cachedProjectName;
+            string customName = GetCustomDisplayName();
+            return string.IsNullOrEmpty(customName) ? _cachedProjectName : customName;
+        }
+
+        /// <summary>
+        /// Returns the display name the user set for this project, or an empty string when unset.
+        /// Stored per project hash, so checkouts of the same repo on different machines
+        /// (or at different paths) can report different names to a shared server.
+        /// </summary>
+        public static string GetCustomDisplayName()
+        {
+            try
+            {
+                return NormalizeDisplayName(EditorPrefs.GetString(GetDisplayNamePrefKey(), string.Empty));
+            }
+            catch
+            {
+                return string.Empty;
+            }
+        }
+
+        /// <summary>
+        /// Persists the display name for this project. An empty value restores the folder-derived name.
+        /// Takes effect the next time the transport connects.
+        /// </summary>
+        public static void SetCustomDisplayName(string displayName)
+        {
+            string normalized = NormalizeDisplayName(displayName);
+            string key = GetDisplayNamePrefKey();
+            if (string.IsNullOrEmpty(normalized))
+            {
+                EditorPrefs.DeleteKey(key);
+            }
+            else
+            {
+                EditorPrefs.SetString(key, normalized);
+            }
+        }
+
+        internal static string NormalizeDisplayName(string displayName)
+        {
+            if (string.IsNullOrWhiteSpace(displayName))
+            {
+                return string.Empty;
+            }
+
+            // '@' separates name and hash in instance ids (Name@hash), so it cannot appear in the name.
+            return displayName.Replace("@", "-").Trim();
+        }
+
+        private static string GetDisplayNamePrefKey()
+        {
+            return $"{EditorPrefKeys.ProjectDisplayName}_{GetProjectHash()}";
         }
 
         private static string ComputeProjectHash(string dataPath)

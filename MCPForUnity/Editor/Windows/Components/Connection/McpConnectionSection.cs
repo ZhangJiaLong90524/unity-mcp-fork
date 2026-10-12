@@ -41,6 +41,8 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
         private Button copyHttpServerCommandButton;
         private Label httpServerCommandHint;
         private TextField httpUrlField;
+        private VisualElement displayNameRow;
+        private TextField displayNameField;
         private Button startHttpServerButton;
         private VisualElement unitySocketPortRow;
         private TextField unityPortField;
@@ -102,6 +104,8 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
             copyHttpServerCommandButton = Root.Q<Button>("copy-http-server-command-button");
             httpServerCommandHint = Root.Q<Label>("http-server-command-hint");
             httpUrlField = Root.Q<TextField>("http-url");
+            displayNameRow = Root.Q<VisualElement>("display-name-row");
+            displayNameField = Root.Q<TextField>("display-name-field");
             startHttpServerButton = Root.Q<Button>("start-http-server-button");
             unitySocketPortRow = Root.Q<VisualElement>("unity-socket-port-row");
             unityPortField = Root.Q<TextField>("unity-port");
@@ -159,6 +163,12 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
                 connectionToggleButton.tooltip = "Start or end the MCP session between Unity and the server.";
 
             httpUrlField.value = HttpEndpointUtility.GetBaseUrl();
+
+            if (displayNameField != null)
+            {
+                displayNameField.value = ProjectIdentityUtility.GetCustomDisplayName();
+                displayNameField.tooltip = "Name this project reports to the MCP server. Leave empty to use the project folder name. Applies on the next connection.";
+            }
 
             // Initialize API key field
             if (apiKeyField != null)
@@ -251,6 +261,19 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
                     evt.StopPropagation();
                 }
             });
+
+            if (displayNameField != null)
+            {
+                displayNameField.RegisterCallback<FocusOutEvent>(_ => PersistDisplayNameFromField());
+                displayNameField.RegisterCallback<KeyDownEvent>(evt =>
+                {
+                    if (evt.keyCode == KeyCode.Return || evt.keyCode == KeyCode.KeypadEnter)
+                    {
+                        PersistDisplayNameFromField();
+                        evt.StopPropagation();
+                    }
+                });
+            }
 
             if (startHttpServerButton != null)
             {
@@ -400,12 +423,8 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
 
             if (isRunning)
             {
-                // Show instance name (project folder name) for better identification in multi-instance scenarios.
-                // Defensive: handle edge cases where path parsing might return null/empty.
-                string projectDir = System.IO.Path.GetDirectoryName(Application.dataPath);
-                string instanceName = !string.IsNullOrEmpty(projectDir)
-                    ? System.IO.Path.GetFileName(projectDir)
-                    : "Unity";
+                // Show the same instance name the server sees (custom display name, else project folder name).
+                string instanceName = ProjectIdentityUtility.GetProjectName();
                 if (string.IsNullOrEmpty(instanceName)) instanceName = "Unity";
                 connectionStatusLabel.text = $"Session Active ({instanceName})";
                 statusIndicator.RemoveFromClassList("disconnected");
@@ -578,6 +597,8 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
             bool httpRemoteSelected = transportDropdown != null && (TransportProtocol)transportDropdown.value == TransportProtocol.HTTPRemote;
 
             httpUrlRow.style.display = useHttp ? DisplayStyle.Flex : DisplayStyle.None;
+            if (displayNameRow != null)
+                displayNameRow.style.display = useHttp ? DisplayStyle.Flex : DisplayStyle.None;
             httpServerControlRow.style.display = useHttp && httpLocalSelected ? DisplayStyle.Flex : DisplayStyle.None;
             unitySocketPortRow.style.display = useHttp ? DisplayStyle.None : DisplayStyle.Flex;
 
@@ -960,6 +981,71 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
             catch (Exception ex)
             {
                 McpLog.Warn($"Failed to end orphaned session: {ex.Message}");
+            }
+            finally
+            {
+                connectionToggleInProgress = false;
+                connectionToggleButton?.SetEnabled(true);
+                UpdateConnectionStatus();
+            }
+        }
+
+        private void PersistDisplayNameFromField()
+        {
+            if (displayNameField == null)
+            {
+                return;
+            }
+
+            string existing = ProjectIdentityUtility.GetCustomDisplayName();
+            ProjectIdentityUtility.SetCustomDisplayName(displayNameField.text);
+            string updated = ProjectIdentityUtility.GetCustomDisplayName();
+            displayNameField.SetValueWithoutNotify(updated);
+
+            if (updated == existing)
+            {
+                return;
+            }
+
+            // The transport captures the name when it starts, so an HTTP session must
+            // reconnect for the server to see the new name.
+            bool reconnect = EditorConfigurationCache.Instance.UseHttpTransport
+                && MCPServiceLocator.Bridge.IsRunning
+                && !connectionToggleInProgress;
+            McpLog.Info(string.IsNullOrEmpty(updated)
+                ? (reconnect ? "Display name cleared; reconnecting to apply." : "Display name cleared; reconnect to apply.")
+                : (reconnect ? $"Display name set to '{updated}'; reconnecting to apply." : $"Display name set to '{updated}'; reconnect to apply."));
+
+            if (reconnect)
+            {
+                _ = ReconnectToApplyDisplayNameAsync();
+            }
+        }
+
+        private async Task ReconnectToApplyDisplayNameAsync()
+        {
+            connectionToggleInProgress = true;
+            connectionToggleButton?.SetEnabled(false);
+
+            try
+            {
+                HttpBridgeReloadHandler.CancelPendingResume();
+                HttpAutoStartHandler.CancelPendingReconnect();
+
+                var bridgeService = MCPServiceLocator.Bridge;
+                await bridgeService.StopAsync();
+                if (await bridgeService.StartAsync())
+                {
+                    await VerifyBridgeConnectionAsync();
+                }
+                else
+                {
+                    McpLog.Warn("Reconnect after display name change failed; press Connect to retry.");
+                }
+            }
+            catch (Exception ex)
+            {
+                McpLog.Warn($"Reconnect after display name change failed: {ex.Message}");
             }
             finally
             {
