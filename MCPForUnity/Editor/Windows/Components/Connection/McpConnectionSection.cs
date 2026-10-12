@@ -174,7 +174,7 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
             if (apiKeyField != null)
             {
                 apiKeyField.value = EditorPrefs.GetString(EditorPrefKeys.ApiKey, string.Empty);
-                apiKeyField.tooltip = "API key for remote-hosted MCP server authentication";
+                apiKeyField.tooltip = "API key for remote-hosted MCP server authentication. Leave empty if the server does not require one.";
                 apiKeyField.isPasswordField = true;
                 apiKeyField.maskChar = '*';
             }
@@ -461,8 +461,6 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
 
                     bool httpRemoteSelected = transportDropdown != null
                         && (TransportProtocol)transportDropdown.value == TransportProtocol.HTTPRemote;
-                    bool httpRemoteNeedsKey = httpRemoteSelected
-                        && string.IsNullOrEmpty(EditorPrefs.GetString(EditorPrefKeys.ApiKey, string.Empty));
                     string remoteUrlError = null;
                     bool remoteUrlAllowed = !httpRemoteSelected
                         || HttpEndpointUtility.IsCurrentRemoteUrlAllowed(out remoteUrlError);
@@ -474,14 +472,10 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
 
                     bool blockedByRemoteUrlPolicy = httpRemoteSelected && !remoteUrlAllowed;
                     bool blockedByLocalUrlPolicy = httpLocalSelected && !localUrlAllowed;
-                    bool canStartSession = !httpRemoteNeedsKey && !blockedByRemoteUrlPolicy && !blockedByLocalUrlPolicy;
+                    bool canStartSession = !blockedByRemoteUrlPolicy && !blockedByLocalUrlPolicy;
                     connectionToggleButton.SetEnabled(canStartSession);
 
-                    if (httpRemoteNeedsKey)
-                    {
-                        connectionToggleButton.tooltip = "An API key is required for HTTP Remote. Enter one above.";
-                    }
-                    else if (blockedByRemoteUrlPolicy)
+                    if (blockedByRemoteUrlPolicy)
                     {
                         connectionToggleButton.tooltip = remoteUrlError ?? "HTTP Remote URL is blocked by current security settings.";
                     }
