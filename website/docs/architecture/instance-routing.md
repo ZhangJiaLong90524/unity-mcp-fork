@@ -23,9 +23,14 @@ hash is a SHA1 of `Application.dataPath` (the absolute path to `Assets`), hex-en
 
 Two things about that are worth knowing before you rely on it:
 
-The hash is a function of the path, so it is not portable. Moving the project, renaming its folder,
-or checking it out on another machine produces a different hash, which invalidates any pin that
-referenced the old one.
+The hash is a function of the path, so it is not portable. Moving the project or renaming its folder
+produces a different hash, which invalidates any pin that referenced the old one. Under HTTP Remote,
+where Editors on several machines share one server, the hash after `@` is a routing key that also
+covers the machine: SHA1 of the machine identity (`SystemInfo.deviceUniqueIdentifier` plus the
+computer name) and `Application.dataPath`, truncated to 16 characters
+(`ProjectIdentityUtility.GetInstanceRoutingKey`). The same project at the same path on two machines
+therefore gets two ids instead of one Editor evicting the other. Every other scope keeps the plain
+path hash.
 
 The truncation length differs by transport. The stdio path truncates to 8 characters
 (`StdioBridgeHost.ComputeProjectHash`), the HTTP path to 16 (`ProjectIdentityUtility.ComputeProjectHash`).
@@ -68,9 +73,13 @@ in `PluginRegistry`, and answers with `registered`.
 Discovery is then a dictionary read. No files, no probes, no timeouts, and no staleness, because an
 entry exists exactly as long as its WebSocket does.
 
-Registration is also idempotent by hash: if an Editor re-registers with a hash that is already
+Registration is also idempotent by routing key: if an Editor re-registers with a key that is already
 present, the older session is evicted, its socket closed, and any in-flight commands on it are failed
-immediately rather than left to time out. That eviction is the domain-reload reconnect path.
+immediately rather than left to time out. That eviction is the domain-reload reconnect path. The
+register message also carries an optional `host_label` (the machine's label, defaulting to the
+computer name) and `project_guid` (`PlayerSettings.productGUID`); the server logs an eviction as
+INFO when the same host reconnects (or neither side reports a host, as with older plugins) and as
+WARNING when a different host took the key, which means two Editors are fighting over one id.
 
 ## The routing rules
 

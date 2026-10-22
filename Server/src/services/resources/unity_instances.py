@@ -22,8 +22,13 @@ async def unity_instances(ctx: Context) -> dict[str, Any]:
     Returns information about each instance including:
     - id: Unique identifier (ProjectName@hash)
     - name: Project name
-    - path: Full project path (stdio only)
-    - hash: 8-character hash of project path
+    - path: Project root folder (HTTP); the project's Assets folder (stdio)
+    - hash: Routing key after '@' in the id (project path hash; in HTTP Remote it also covers the machine)
+    - host: Label of the Editor's machine (HTTP only)
+    - project_guid: Same for every clone of a project (HTTP only)
+
+    HTTP results also carry same_project (instances sharing a project_guid, with name, host
+    and path) and a warning for shared project names that same_project does not explain.
     - port: TCP port number (stdio only)
     - status: Current status (running, reloading, etc.) (stdio only)
     - last_heartbeat: Last heartbeat timestamp (stdio only)
@@ -59,19 +64,13 @@ async def unity_instances(ctx: Context) -> dict[str, Any]:
                     "id": f"{project}@{project_hash}",
                     "name": project,
                     "hash": project_hash,
+                    "host": session_info.host_label,
+                    "path": session_info.project_path,
+                    "project_guid": session_info.project_guid,
                     "unity_version": session_info.unity_version,
                     "connected_at": session_info.connected_at,
                     "session_id": session_id,
                 })
-
-            # Check for duplicate project names
-            name_counts = {}
-            for inst in instances:
-                name_counts[inst["name"]] = name_counts.get(
-                    inst["name"], 0) + 1
-
-            duplicates = [name for name,
-                          count in name_counts.items() if count > 1]
 
             result = {
                 "success": True,
@@ -80,10 +79,43 @@ async def unity_instances(ctx: Context) -> dict[str, Any]:
                 "instances": instances,
             }
 
+            # The same project can run on several hosts or checkouts at once; productGUID is
+            # shared by every clone, so it groups them even when folder names differ. A folder
+            # copied into a new project keeps the GUID too, so each entry also carries name,
+            # host and path rather than letting the GUID decide alone.
+            by_guid: dict[str, list[dict[str, Any]]] = {}
+            for inst in instances:
+                if inst["project_guid"]:
+                    by_guid.setdefault(inst["project_guid"], []).append(inst)
+            same_project = [
+                {
+                    "project_guid": guid,
+                    "instances": [
+                        {"id": i["id"], "name": i["name"], "host": i["host"], "path": i["path"]}
+                        for i in group
+                    ],
+                }
+                for guid, group in by_guid.items() if len(group) > 1
+            ]
+            if same_project:
+                result["same_project"] = same_project
+
+            # Warn only about shared names that the grouping above does not already explain.
+            guids_by_name: dict[str, set[str | None]] = {}
+            for inst in instances:
+                guids_by_name.setdefault(inst["name"], set()).add(inst["project_guid"])
+            name_counts: dict[str, int] = {}
+            for inst in instances:
+                name_counts[inst["name"]] = name_counts.get(inst["name"], 0) + 1
+            duplicates = [
+                name for name, count in name_counts.items()
+                if count > 1 and (len(guids_by_name[name]) > 1 or None in guids_by_name[name])
+            ]
+
             if duplicates:
                 result["warning"] = (
-                    f"Multiple instances found with duplicate project names: {duplicates}. "
-                    f"Use full format (e.g., 'ProjectName@hash') to specify which instance."
+                    f"Multiple instances share a project name: {duplicates}. "
+                    "Tell them apart by host and path, then pass the full id (ProjectName@hash)."
                 )
 
             return result

@@ -373,6 +373,30 @@ def _normalize_instance_token(instance_token: str | None) -> tuple[str | None, s
     return None, instance_token
 
 
+def _match_cli_session(sessions: dict, unity_instance: str) -> tuple[str | None, Any, str | None]:
+    """Find the session for a CLI instance token: (session_id, details, error).
+
+    A full ``Name@hash`` id or a bare hash matches by hash only, because the same project
+    name can be connected from several machines. A bare project name is accepted only
+    when exactly one session carries it.
+    """
+    instance_name, instance_hash = _normalize_instance_token(unity_instance)
+    for sid, details in sessions.items():
+        if details.hash == instance_hash:
+            return sid, details, None
+    if instance_name is not None:
+        return None, None, None
+    named = [(sid, d) for sid, d in sessions.items() if d.project == unity_instance]
+    if len(named) > 1:
+        ids = ", ".join(sorted(f"{d.project}@{d.hash}" for _, d in named))
+        return None, None, (
+            f"Unity instance '{unity_instance}' is ambiguous: {ids}. Pass the full id (ProjectName@hash)."
+        )
+    if named:
+        return named[0][0], named[0][1], None
+    return None, None, None
+
+
 def create_mcp_server(project_scoped_tools: bool) -> FastMCP:
     mcp = FastMCP(
         name="mcp-for-unity-server",
@@ -435,15 +459,11 @@ def create_mcp_server(project_scoped_tools: bool) -> FastMCP:
                 # Find target session
                 session_id = None
                 session_details = None
-                instance_name, instance_hash = _normalize_instance_token(
-                    unity_instance)
                 if unity_instance:
-                    # Try to match by hash or project name
-                    for sid, details in sessions.sessions.items():
-                        if details.hash == instance_hash or details.project in (instance_name, unity_instance):
-                            session_id = sid
-                            session_details = details
-                            break
+                    session_id, session_details, ambiguity = _match_cli_session(
+                        sessions.sessions, unity_instance)
+                    if ambiguity:
+                        return JSONResponse({"success": False, "error": ambiguity}, status_code=400)
 
                 # If a specific unity_instance was requested but not found, return an error
                 # (Check done here so execute_custom_tool can also validate the instance)
@@ -542,6 +562,9 @@ def create_mcp_server(project_scoped_tools: bool) -> FastMCP:
                         "session_id": session_id,
                         "project": details.project,
                         "hash": details.hash,
+                        "host": details.host_label,
+                        "path": details.project_path,
+                        "project_guid": details.project_guid,
                         "unity_version": details.unity_version,
                         "connected_at": details.connected_at,
                     })
@@ -554,8 +577,6 @@ def create_mcp_server(project_scoped_tools: bool) -> FastMCP:
             """REST endpoint to list custom tools for the active Unity project."""
             try:
                 unity_instance = request.query_params.get("instance")
-                instance_name, instance_hash = _normalize_instance_token(
-                    unity_instance)
 
                 sessions = await PluginHub.get_sessions()
                 if not sessions.sessions:
@@ -566,11 +587,10 @@ def create_mcp_server(project_scoped_tools: bool) -> FastMCP:
 
                 session_details = None
                 if unity_instance:
-                    # Try to match by hash or project name
-                    for _, details in sessions.sessions.items():
-                        if details.hash == instance_hash or details.project in (instance_name, unity_instance):
-                            session_details = details
-                            break
+                    _, session_details, ambiguity = _match_cli_session(
+                        sessions.sessions, unity_instance)
+                    if ambiguity:
+                        return JSONResponse({"success": False, "error": ambiguity}, status_code=400)
                     if not session_details:
                         return JSONResponse(
                             {

@@ -21,10 +21,12 @@ You can have several Unity Editors open at once and aim a single MCP session at 
 
 Each connected Unity Editor advertises a stable ID of the form `Name@hash`, where:
 
-- `Name` is the project's `productName` from Player Settings
-- `hash` is a stable 8-character hash derived from the project path
+- `Name` is the project's folder name
+- `hash` is a stable hash derived from the project path. Under HTTP Remote it also mixes in the machine identity, so the same project checked out at the same path on several machines gets a distinct id on each one instead of disconnecting the others.
 
 Example: `MyGame@a1b2c3d4`.
+
+Upgrading to a version with machine-aware ids changes the HTTP Remote `hash` once; pick the instance again from `mcpforunity://instances` afterwards.
 
 You can also reference an instance by:
 
@@ -37,7 +39,12 @@ Read the resource:
 
 > `mcpforunity://instances`
 
-It returns the list of currently connected Editors with their `Name@hash`, project path, transport, and port. Most MCP clients expose this as the `unity_instances` resource.
+It returns the list of currently connected Editors with their `Name@hash`, project path, transport, and port. Over HTTP each entry also carries:
+
+- `host` — the label of the Editor's machine. Set it under **Host Label** in the MCP for Unity window; it defaults to the computer name and is shared by every project on that machine.
+- `project_guid` — the same for every clone of a project, so it tells you when two entries are the same project on different machines or checkouts.
+
+When several instances share a `project_guid`, the result adds `same_project` listing each one's name, host and path. A `warning` is added only for shared project names that `same_project` does not explain. Most MCP clients expose this as the `unity_instances` resource.
 
 ## Setting the active instance for the session
 

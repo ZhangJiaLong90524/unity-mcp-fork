@@ -19,6 +19,9 @@ namespace MCPForUnity.Editor.Helpers
         private static bool _legacyKeyCleared;
         private static string _cachedProjectName = "Unknown";
         private static string _cachedProjectHash = "default";
+        private static string _cachedDataPath = string.Empty;
+        private static string _cachedProjectGuid = string.Empty;
+        private static string _cachedMachineIdentity = string.Empty;
         private static string _fallbackSessionId;
         private static bool _cacheScheduled;
 
@@ -58,6 +61,9 @@ namespace MCPForUnity.Editor.Helpers
 
                 _cachedProjectHash = ComputeProjectHash(dataPath);
                 _cachedProjectName = ComputeProjectName(dataPath);
+                _cachedDataPath = dataPath;
+                _cachedProjectGuid = ReadProjectGuid();
+                _cachedMachineIdentity = ReadMachineIdentity();
             }
             catch
             {
@@ -67,12 +73,46 @@ namespace MCPForUnity.Editor.Helpers
 
         /// <summary>
         /// Returns the SHA1 hash of the current project path (truncated to 16 characters).
-        /// Matches the legacy hash used by the stdio bridge and server registry.
+        /// Keys this project's local state (session id, stdio bridge). The server routes by
+        /// <see cref="GetInstanceRoutingKey"/>, which equals this hash outside HTTP Remote.
         /// </summary>
         public static string GetProjectHash()
         {
             EnsureIdentityCache();
             return _cachedProjectHash;
+        }
+
+        /// <summary>
+        /// Returns the key the server routes this Editor by: the part after '@' in Name@hash.
+        /// In HTTP Remote, Editors on several machines share one server, and a project cloned
+        /// at the same path on two machines has the same project hash; the server would treat
+        /// the second connection as a reconnect of the first and evict it. Mixing in the machine
+        /// identity keeps their keys distinct while staying stable across reconnects. Other
+        /// scopes stay on one machine, so they keep the project hash and their ids do not change.
+        /// </summary>
+        public static string GetInstanceRoutingKey(bool remoteScope)
+        {
+            string projectHash = GetProjectHash();
+            if (!remoteScope)
+            {
+                return projectHash;
+            }
+
+            if (string.IsNullOrEmpty(_cachedMachineIdentity) || string.IsNullOrEmpty(_cachedDataPath))
+            {
+                // Without a machine identity the key collides with the same path on other machines,
+                // and the server will keep evicting one of them. Say so instead of failing silently.
+                McpLog.Warn("Could not read this machine's identity; HTTP Remote falls back to the project path hash, "
+                    + "so Editors at the same path on other machines may disconnect each other.");
+                return projectHash;
+            }
+
+            return ComputeRemoteRoutingKey(_cachedMachineIdentity, _cachedDataPath);
+        }
+
+        internal static string ComputeRemoteRoutingKey(string machineIdentity, string dataPath)
+        {
+            return ComputeProjectHash(machineIdentity + "\n" + dataPath);
         }
 
         /// <summary>
@@ -82,20 +122,39 @@ namespace MCPForUnity.Editor.Helpers
         public static string GetProjectName()
         {
             EnsureIdentityCache();
-            string customName = GetCustomDisplayName();
-            return string.IsNullOrEmpty(customName) ? _cachedProjectName : customName;
+            return _cachedProjectName;
         }
 
         /// <summary>
-        /// Returns the display name the user set for this project, or an empty string when unset.
-        /// Stored per project hash, so checkouts of the same repo on different machines
-        /// (or at different paths) can report different names to a shared server.
+        /// Returns the project's PlayerSettings.productGUID as 32 hex digits, or an empty string
+        /// when unavailable. It lives in version-controlled ProjectSettings, so every clone of a
+        /// project reports the same value whatever its folder name or machine.
         /// </summary>
-        public static string GetCustomDisplayName()
+        public static string GetProjectGuid()
+        {
+            EnsureIdentityCache();
+            return _cachedProjectGuid;
+        }
+
+        /// <summary>
+        /// Returns the label this machine reports to the MCP server so agents can tell machines apart.
+        /// EditorPrefs are per machine and shared by every project, so one setting covers all projects.
+        /// Defaults to the computer name. Changing it does not change the routing key.
+        /// </summary>
+        public static string GetHostLabel()
+        {
+            string custom = GetCustomHostLabel();
+            return string.IsNullOrEmpty(custom) ? GetDefaultHostLabel() : custom;
+        }
+
+        /// <summary>
+        /// Returns the host label the user set, or an empty string when unset.
+        /// </summary>
+        public static string GetCustomHostLabel()
         {
             try
             {
-                return NormalizeDisplayName(EditorPrefs.GetString(GetDisplayNamePrefKey(), string.Empty));
+                return NormalizeHostLabel(EditorPrefs.GetString(EditorPrefKeys.HostLabel, string.Empty));
             }
             catch
             {
@@ -104,37 +163,84 @@ namespace MCPForUnity.Editor.Helpers
         }
 
         /// <summary>
-        /// Persists the display name for this project. An empty value restores the folder-derived name.
+        /// Persists the host label. An empty value restores the computer name.
         /// Takes effect the next time the transport connects.
         /// </summary>
-        public static void SetCustomDisplayName(string displayName)
+        public static void SetHostLabel(string hostLabel)
         {
-            string normalized = NormalizeDisplayName(displayName);
-            string key = GetDisplayNamePrefKey();
+            string normalized = NormalizeHostLabel(hostLabel);
             if (string.IsNullOrEmpty(normalized))
             {
-                EditorPrefs.DeleteKey(key);
+                EditorPrefs.DeleteKey(EditorPrefKeys.HostLabel);
             }
             else
             {
-                EditorPrefs.SetString(key, normalized);
+                EditorPrefs.SetString(EditorPrefKeys.HostLabel, normalized);
             }
         }
 
-        internal static string NormalizeDisplayName(string displayName)
+        internal static string NormalizeHostLabel(string hostLabel)
         {
-            if (string.IsNullOrWhiteSpace(displayName))
+            return string.IsNullOrWhiteSpace(hostLabel) ? string.Empty : hostLabel.Trim();
+        }
+
+        internal static string GetDefaultHostLabel()
+        {
+            try
+            {
+                string machineName = Environment.MachineName;
+                return string.IsNullOrEmpty(machineName) ? "Unknown" : machineName;
+            }
+            catch
+            {
+                return "Unknown";
+            }
+        }
+
+        private static string ReadProjectGuid()
+        {
+            try
+            {
+                Guid guid = PlayerSettings.productGUID;
+                return guid == Guid.Empty ? string.Empty : guid.ToString("N");
+            }
+            catch
             {
                 return string.Empty;
             }
-
-            // '@' separates name and hash in instance ids (Name@hash), so it cannot appear in the name.
-            return displayName.Replace("@", "-").Trim();
         }
 
-        private static string GetDisplayNamePrefKey()
+        // Both parts take part so two machines only collide when they share hardware ids and a
+        // computer name; either one alone can repeat (cloned images, renamed hosts).
+        private static string ReadMachineIdentity()
         {
-            return $"{EditorPrefKeys.ProjectDisplayName}_{GetProjectHash()}";
+            string deviceId = string.Empty;
+            try
+            {
+                deviceId = SystemInfo.deviceUniqueIdentifier;
+                if (deviceId == SystemInfo.unsupportedIdentifier)
+                {
+                    deviceId = string.Empty;
+                }
+            }
+            catch
+            {
+                // Keep the computer name alone
+            }
+
+            string machineName = string.Empty;
+            try
+            {
+                machineName = Environment.MachineName ?? string.Empty;
+            }
+            catch
+            {
+                // Keep the device id alone
+            }
+
+            return string.IsNullOrEmpty(deviceId) && string.IsNullOrEmpty(machineName)
+                ? string.Empty
+                : deviceId + "|" + machineName;
         }
 
         private static string ComputeProjectHash(string dataPath)

@@ -41,8 +41,8 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
         private Button copyHttpServerCommandButton;
         private Label httpServerCommandHint;
         private TextField httpUrlField;
-        private VisualElement displayNameRow;
-        private TextField displayNameField;
+        private VisualElement hostLabelRow;
+        private TextField hostLabelField;
         private Button startHttpServerButton;
         private VisualElement unitySocketPortRow;
         private TextField unityPortField;
@@ -104,8 +104,8 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
             copyHttpServerCommandButton = Root.Q<Button>("copy-http-server-command-button");
             httpServerCommandHint = Root.Q<Label>("http-server-command-hint");
             httpUrlField = Root.Q<TextField>("http-url");
-            displayNameRow = Root.Q<VisualElement>("display-name-row");
-            displayNameField = Root.Q<TextField>("display-name-field");
+            hostLabelRow = Root.Q<VisualElement>("host-label-row");
+            hostLabelField = Root.Q<TextField>("host-label-field");
             startHttpServerButton = Root.Q<Button>("start-http-server-button");
             unitySocketPortRow = Root.Q<VisualElement>("unity-socket-port-row");
             unityPortField = Root.Q<TextField>("unity-port");
@@ -164,10 +164,10 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
 
             httpUrlField.value = HttpEndpointUtility.GetBaseUrl();
 
-            if (displayNameField != null)
+            if (hostLabelField != null)
             {
-                displayNameField.value = ProjectIdentityUtility.GetCustomDisplayName();
-                displayNameField.tooltip = "Name this project reports to the MCP server. Leave empty to use the project folder name. Applies on the next connection.";
+                hostLabelField.value = ProjectIdentityUtility.GetCustomHostLabel();
+                hostLabelField.tooltip = $"Name this machine reports to the MCP server, shared by every project on this machine. Leave empty to use the computer name ({ProjectIdentityUtility.GetDefaultHostLabel()}). Applies on the next connection.";
             }
 
             // Initialize API key field
@@ -262,14 +262,14 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
                 }
             });
 
-            if (displayNameField != null)
+            if (hostLabelField != null)
             {
-                displayNameField.RegisterCallback<FocusOutEvent>(_ => PersistDisplayNameFromField());
-                displayNameField.RegisterCallback<KeyDownEvent>(evt =>
+                hostLabelField.RegisterCallback<FocusOutEvent>(_ => PersistHostLabelFromField());
+                hostLabelField.RegisterCallback<KeyDownEvent>(evt =>
                 {
                     if (evt.keyCode == KeyCode.Return || evt.keyCode == KeyCode.KeypadEnter)
                     {
-                        PersistDisplayNameFromField();
+                        PersistHostLabelFromField();
                         evt.StopPropagation();
                     }
                 });
@@ -423,10 +423,13 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
 
             if (isRunning)
             {
-                // Show the same instance name the server sees (custom display name, else project folder name).
+                // Show the project and host label the server sees, so instances on several machines are distinguishable.
                 string instanceName = ProjectIdentityUtility.GetProjectName();
                 if (string.IsNullOrEmpty(instanceName)) instanceName = "Unity";
-                connectionStatusLabel.text = $"Session Active ({instanceName})";
+                // Only the HTTP transport reports the host label to the server.
+                connectionStatusLabel.text = stdioSelected
+                    ? $"Session Active ({instanceName})"
+                    : $"Session Active ({instanceName} on {ProjectIdentityUtility.GetHostLabel()})";
                 statusIndicator.RemoveFromClassList("disconnected");
                 statusIndicator.AddToClassList("connected");
                 connectionToggleButton.text = stdioSelected ? "End Session" : "Disconnect";
@@ -591,8 +594,8 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
             bool httpRemoteSelected = transportDropdown != null && (TransportProtocol)transportDropdown.value == TransportProtocol.HTTPRemote;
 
             httpUrlRow.style.display = useHttp ? DisplayStyle.Flex : DisplayStyle.None;
-            if (displayNameRow != null)
-                displayNameRow.style.display = useHttp ? DisplayStyle.Flex : DisplayStyle.None;
+            if (hostLabelRow != null)
+                hostLabelRow.style.display = useHttp ? DisplayStyle.Flex : DisplayStyle.None;
             httpServerControlRow.style.display = useHttp && httpLocalSelected ? DisplayStyle.Flex : DisplayStyle.None;
             unitySocketPortRow.style.display = useHttp ? DisplayStyle.None : DisplayStyle.Flex;
 
@@ -984,39 +987,39 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
             }
         }
 
-        private void PersistDisplayNameFromField()
+        private void PersistHostLabelFromField()
         {
-            if (displayNameField == null)
+            if (hostLabelField == null)
             {
                 return;
             }
 
-            string existing = ProjectIdentityUtility.GetCustomDisplayName();
-            ProjectIdentityUtility.SetCustomDisplayName(displayNameField.text);
-            string updated = ProjectIdentityUtility.GetCustomDisplayName();
-            displayNameField.SetValueWithoutNotify(updated);
+            string existing = ProjectIdentityUtility.GetCustomHostLabel();
+            ProjectIdentityUtility.SetHostLabel(hostLabelField.text);
+            string updated = ProjectIdentityUtility.GetCustomHostLabel();
+            hostLabelField.SetValueWithoutNotify(updated);
 
             if (updated == existing)
             {
                 return;
             }
 
-            // The transport captures the name when it starts, so an HTTP session must
-            // reconnect for the server to see the new name.
+            // The transport captures the label when it starts, so an HTTP session must
+            // reconnect for the server to see the new label.
             bool reconnect = EditorConfigurationCache.Instance.UseHttpTransport
                 && MCPServiceLocator.Bridge.IsRunning
                 && !connectionToggleInProgress;
             McpLog.Info(string.IsNullOrEmpty(updated)
-                ? (reconnect ? "Display name cleared; reconnecting to apply." : "Display name cleared; reconnect to apply.")
-                : (reconnect ? $"Display name set to '{updated}'; reconnecting to apply." : $"Display name set to '{updated}'; reconnect to apply."));
+                ? (reconnect ? "Host label cleared; reconnecting to apply." : "Host label cleared; reconnect to apply.")
+                : (reconnect ? $"Host label set to '{updated}'; reconnecting to apply." : $"Host label set to '{updated}'; reconnect to apply."));
 
             if (reconnect)
             {
-                _ = ReconnectToApplyDisplayNameAsync();
+                _ = ReconnectToApplyHostLabelAsync();
             }
         }
 
-        private async Task ReconnectToApplyDisplayNameAsync()
+        private async Task ReconnectToApplyHostLabelAsync()
         {
             connectionToggleInProgress = true;
             connectionToggleButton?.SetEnabled(false);
@@ -1034,12 +1037,12 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
                 }
                 else
                 {
-                    McpLog.Warn("Reconnect after display name change failed; press Connect to retry.");
+                    McpLog.Warn("Reconnect after host label change failed; press Connect to retry.");
                 }
             }
             catch (Exception ex)
             {
-                McpLog.Warn($"Reconnect after display name change failed: {ex.Message}");
+                McpLog.Warn($"Reconnect after host label change failed: {ex.Message}");
             }
             finally
             {

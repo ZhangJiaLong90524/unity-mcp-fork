@@ -383,6 +383,9 @@ class PluginHub(WebSocketEndpoint):
                     hash=session.project_hash,
                     unity_version=session.unity_version,
                     connected_at=session.connected_at.isoformat(),
+                    host_label=session.host_label,
+                    project_guid=session.project_guid,
+                    project_path=session.project_path,
                 )
                 for session_id, session in sessions.items()
             }
@@ -458,7 +461,13 @@ class PluginHub(WebSocketEndpoint):
         response = RegisteredMessage(session_id=session_id)
         await websocket.send_json(response.model_dump())
 
-        session, evicted_session_id = await registry.register(session_id, project_name, project_hash, unity_version, project_path, user_id=user_id)
+        # Read the session this registration may replace, so the eviction log can say which host lost it.
+        previous_id = await registry.get_session_id_by_hash(project_hash, user_id=user_id)
+        previous = await registry.get_session(previous_id) if previous_id else None
+
+        session, evicted_session_id = await registry.register(
+            session_id, project_name, project_hash, unity_version, project_path, user_id=user_id,
+            project_guid=payload.project_guid, host_label=payload.host_label)
         evicted_ws = None
         async with lock:
             # Clean up the evicted session's connection, ping loop, and pending commands
@@ -487,7 +496,22 @@ class PluginHub(WebSocketEndpoint):
                         evicted_session_id,
                         cancelled_commands,
                     )
-                logger.info(f"Evicted previous session {evicted_session_id} for same instance")
+                old_host = previous.host_label if previous and previous.session_id == evicted_session_id else None
+                if old_host == payload.host_label:
+                    # Same host reconnecting, or an older plugin that reports no host on either side.
+                    logger.info(
+                        "Session %s replaced %s for %s (%s): reconnect from %s",
+                        session_id, evicted_session_id, project_name, project_hash, old_host or "unknown host",
+                    )
+                else:
+                    # A different host took over the key: two Editors share one routing key and
+                    # will keep evicting each other.
+                    logger.warning(
+                        "Session %s from %s evicted session %s from %s: both registered %s with key %s",
+                        session_id, payload.host_label or "unknown host",
+                        evicted_session_id, old_host or "unknown host",
+                        project_name, project_hash,
+                    )
 
             cls._connections[session.session_id] = websocket
             # Initialize last pong time and start ping loop for this session
@@ -512,9 +536,9 @@ class PluginHub(WebSocketEndpoint):
                 )
 
         if user_id:
-            logger.info(f"Plugin registered: {project_name} ({project_hash}) for user {user_id}")
+            logger.info(f"Plugin registered: {project_name} ({project_hash}) on {payload.host_label or 'unknown host'} as session {session_id} for user {user_id}")
         else:
-            logger.info(f"Plugin registered: {project_name} ({project_hash})")
+            logger.info(f"Plugin registered: {project_name} ({project_hash}) on {payload.host_label or 'unknown host'} as session {session_id}")
 
     async def _handle_register_tools(self, websocket: WebSocket, payload: RegisterToolsMessage) -> None:
         cls = type(self)

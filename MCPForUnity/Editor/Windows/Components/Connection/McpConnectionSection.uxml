@@ -17,9 +17,9 @@
                 <ui:Label text="HTTP URL:" class="setting-label" />
                 <ui:TextField name="http-url" class="url-field" />
             </ui:VisualElement>
-            <ui:VisualElement class="setting-row" name="display-name-row">
-                <ui:Label text="Display Name:" class="setting-label" />
-                <ui:TextField name="display-name-field" class="url-field" />
+            <ui:VisualElement class="setting-row" name="host-label-row">
+                <ui:Label text="Host Label:" class="setting-label" />
+                <ui:TextField name="host-label-field" class="url-field" />
             </ui:VisualElement>
             <ui:VisualElement name="api-key-row" style="margin-bottom: 4px;">
                 <ui:VisualElement class="setting-row">

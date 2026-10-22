@@ -37,6 +37,10 @@ class RegisterMessage(BaseModel):
     project_hash: str
     unity_version: str = "Unknown"
     project_path: str | None = None  # Full path to project root (for focus nudging)
+    # Same for every clone of a project (PlayerSettings.productGUID); groups instances by project.
+    project_guid: str | None = None
+    # Label the user gave the Editor's machine (defaults to the computer name).
+    host_label: str | None = None
 
 
 class RegisterToolsMessage(BaseModel):
@@ -62,6 +66,9 @@ class SessionDetails(BaseModel):
     hash: str
     unity_version: str
     connected_at: str
+    host_label: str | None = None
+    project_guid: str | None = None
+    project_path: str | None = None
 
 
 class SessionList(BaseModel):
