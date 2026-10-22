@@ -49,8 +49,10 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
 
         private Uri _endpointUri;
         private string _sessionId;
-        private string _projectHash;
+        private string _routingKey;
         private string _projectName;
+        private string _projectGuid;
+        private string _hostLabel;
         private string _projectPath;
         private string _unityVersion;
         private TimeSpan _keepAliveInterval = DefaultKeepAliveInterval;
@@ -80,9 +82,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         public async Task<bool> StartAsync()
         {
             // Capture identity values on the main thread before any async context switching
-            _projectName = ProjectIdentityUtility.GetProjectName();
-            _projectHash = ProjectIdentityUtility.GetProjectHash();
-            _unityVersion = Application.unityVersion;
+            CaptureIdentity(HttpEndpointUtility.IsRemoteScope());
             _apiKey = HttpEndpointUtility.IsRemoteScope()
                 ? EditorPrefs.GetString(EditorPrefKeys.ApiKey, string.Empty)
                 : string.Empty;
@@ -730,19 +730,35 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             }
         }
 
-        private async Task SendRegisterAsync(CancellationToken token)
+        internal void CaptureIdentity(bool remoteScope)
         {
-            var registerPayload = new JObject
+            _projectName = ProjectIdentityUtility.GetProjectName();
+            _routingKey = ProjectIdentityUtility.GetInstanceRoutingKey(remoteScope);
+            _projectGuid = ProjectIdentityUtility.GetProjectGuid();
+            _hostLabel = ProjectIdentityUtility.GetHostLabel();
+            _unityVersion = Application.unityVersion;
+        }
+
+        private Task SendRegisterAsync(CancellationToken token)
+        {
+            return SendJsonAsync(BuildRegisterPayload(), token);
+        }
+
+        internal JObject BuildRegisterPayload()
+        {
+            return new JObject
             {
                 ["type"] = "register",
                 // session_id is now server-authoritative; omitted here or sent as null
                 ["project_name"] = _projectName,
-                ["project_hash"] = _projectHash,
+                // The server keys sessions and routes by this field; it carries the routing key,
+                // which equals the project hash outside HTTP Remote.
+                ["project_hash"] = _routingKey,
                 ["unity_version"] = _unityVersion,
-                ["project_path"] = _projectPath
+                ["project_path"] = _projectPath,
+                ["project_guid"] = _projectGuid,
+                ["host_label"] = _hostLabel
             };
-
-            await SendJsonAsync(registerPayload, token).ConfigureAwait(false);
         }
 
         private Task SendPongAsync(CancellationToken token)

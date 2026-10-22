@@ -6,7 +6,9 @@ using System.Reflection;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Services.Transport.Transports;
+using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 
 namespace MCPForUnityTests.Editor.Services
@@ -152,6 +154,32 @@ namespace MCPForUnityTests.Editor.Services
 
             Assert.IsFalse(socket.CloseOutputCalled);
             Assert.IsFalse(socket.AbortCalled);
+        }
+
+        [Test]
+        public void BuildRegisterPayload_RemoteScope_SendsMachineRoutingKeyAndHostFields()
+        {
+            var client = new WebSocketTransportClient();
+
+            client.CaptureIdentity(remoteScope: true);
+            JObject payload = client.BuildRegisterPayload();
+
+            Assert.AreEqual(ProjectIdentityUtility.GetInstanceRoutingKey(remoteScope: true), (string)payload["project_hash"]);
+            Assert.AreNotEqual(ProjectIdentityUtility.GetProjectHash(), (string)payload["project_hash"]);
+            Assert.AreEqual(ProjectIdentityUtility.GetProjectName(), (string)payload["project_name"]);
+            Assert.AreEqual(ProjectIdentityUtility.GetProjectGuid(), (string)payload["project_guid"]);
+            Assert.AreEqual(ProjectIdentityUtility.GetHostLabel(), (string)payload["host_label"]);
+        }
+
+        [Test]
+        public void BuildRegisterPayload_LocalScope_SendsProjectHash()
+        {
+            var client = new WebSocketTransportClient();
+
+            client.CaptureIdentity(remoteScope: false);
+            JObject payload = client.BuildRegisterPayload();
+
+            Assert.AreEqual(ProjectIdentityUtility.GetProjectHash(), (string)payload["project_hash"]);
         }
 
         private static List<Uri> InvokeBuildConnectionCandidateUris(Uri endpoint)
