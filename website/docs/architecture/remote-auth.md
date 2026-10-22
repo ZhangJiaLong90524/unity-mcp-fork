@@ -109,7 +109,7 @@ Both indexes are updated during `register()` and cleaned up during `unregister()
 
 Key methods:
 
-- `register(session_id, project_name, project_hash, unity_version, user_id=None)` - Registers a session and updates the appropriate index. If an existing session claims the same key, it is evicted.
+- `register(session_id, project_name, project_hash, unity_version, project_path=None, user_id=None, project_guid=None, host_label=None)` - Registers a session and updates the appropriate index. If an existing session claims the same key, it is evicted. `project_hash` is the routing key the plugin sends: the project path hash, or under HTTP Remote a hash of machine identity and path.
 - `get_session_id_by_hash(project_hash)` - Local-mode lookup.
 - `get_session_id_by_hash(project_hash, user_id)` - Remote-mode lookup.
 - `list_sessions(user_id=None)` - Returns sessions filtered by user. Raises `ValueError` if `user_id` is `None` while `config.http_remote_hosted` is `True`, preventing accidental cross-user leaks.
@@ -234,7 +234,7 @@ A single `_hash_to_session` dict. Any user can see any session. `list_sessions(u
 ("user-A", "def456")       ->  "uuid-2"
 ```
 
-A separate `_user_hash_to_session` dict with composite keys. Two users working on cloned repos (same `project_hash`) get independent sessions.
+A separate `_user_hash_to_session` dict with composite keys. Two users working on cloned repos get independent sessions even if their keys match. Within one user, the same project on several machines stays apart because the plugin mixes machine identity into the key under HTTP Remote.
 
 ### Reconnect Handling
 
