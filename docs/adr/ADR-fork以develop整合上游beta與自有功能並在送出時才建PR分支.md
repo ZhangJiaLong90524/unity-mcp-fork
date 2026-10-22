@@ -36,6 +36,8 @@ Chosen option: "`develop` 整合線以 `beta` 為基底，功能分支從 `devel
 
 他人的 PR 以合併原分支的方式收入 `develop`，不 cherry-pick：保留原作者的提交雜湊，上游日後以合併提交收下該 PR 時，git 能認出是同一批提交。
 
+`develop` 另有一份鏡像放在工作用的私有 GitLab，供不能依賴個人 GitHub 的專案取用 Unity 套件與 server。鏡像只收 `develop` 與 tag，不在鏡像上提交；推送 `develop` 時兩個遠端一起推，兩邊頂端維持同一個提交。
+
 #### Consequences／影響後果
 
 * Good, because `beta` 保持可快轉，同步上游只需快轉 `beta` 再把它合進 `develop`
@@ -49,6 +51,7 @@ Chosen option: "`develop` 整合線以 `beta` 為基底，功能分支從 `devel
 1. `git log --no-merges origin/beta..beta` 沒有輸出（`beta` 沒有 fork 提交）。
 2. `develop` 上合併 `origin/beta` 與功能分支的提交都是雙親合併提交。
 3. 送出的 PR 分支以 `origin/beta` 為基底，`git diff origin/beta...<PR 分支> --name-only` 不含 `docs/adr/`。
+4. 推送後 GitHub fork 與 GitLab 鏡像的 `develop` 頂端是同一個提交。
 
 ### Pros and Cons of the Options／各選項的優缺點
 
