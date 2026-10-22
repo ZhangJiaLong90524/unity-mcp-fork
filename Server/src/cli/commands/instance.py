@@ -43,6 +43,10 @@ def list_instances():
         # Format: ProjectName@hash (Unity version)
         display_id = f"{project}@{hash_id}" if hash_id else project
         click.echo(f"  • {display_id} (Unity {version})")
+        if inst.get("host"):
+            click.echo(f"    Host: {inst['host']}")
+        if inst.get("path"):
+            click.echo(f"    Path: {inst['path']}")
         if session_id:
             click.echo(f"    Session: {session_id[:8]}...")
 
