@@ -36,7 +36,7 @@ Chosen option: "`develop` 整合線以 `beta` 為基底，功能分支從 `devel
 
 他人的 PR 以合併原分支的方式收入 `develop`，不 cherry-pick：保留原作者的提交雜湊，上游日後以合併提交收下該 PR 時，git 能認出是同一批提交。
 
-`develop` 另有一份鏡像放在工作用的私有 GitLab，供不能依賴個人 GitHub 的專案取用 Unity 套件與 server。鏡像只收 `develop` 與 tag，不在鏡像上提交；推送 `develop` 時兩個遠端一起推，兩邊頂端維持同一個提交。
+`develop` 另有一份鏡像放在工作用的私有 GitLab，供不能依賴個人 GitHub 的專案取用 Unity 套件與 server。鏡像只收 `develop` 與 tag，不在鏡像上提交。GitHub fork 是來源：`develop` 的新提交先推到 GitHub fork，再由能同時連到兩個遠端的工作機從 GitHub fork 拉下，以同一個提交只快轉推到鏡像，不強推。只能連 GitHub 的家用機只推 GitHub fork，推完經跨主機通訊通知完整雜湊，由工作機對齊鏡像。
 
 #### Consequences／影響後果
 
@@ -51,7 +51,7 @@ Chosen option: "`develop` 整合線以 `beta` 為基底，功能分支從 `devel
 1. `git log --no-merges origin/beta..beta` 沒有輸出（`beta` 沒有 fork 提交）。
 2. `develop` 上合併 `origin/beta` 與功能分支的提交都是雙親合併提交。
 3. 送出的 PR 分支以 `origin/beta` 為基底，`git diff origin/beta...<PR 分支> --name-only` 不含 `docs/adr/`。
-4. 推送後 GitHub fork 與 GitLab 鏡像的 `develop` 頂端是同一個提交。
+4. 工作機對齊鏡像後，GitHub fork 與 GitLab 鏡像的 `develop` 頂端是同一個提交。
 
 ### Pros and Cons of the Options／各選項的優缺點
 
