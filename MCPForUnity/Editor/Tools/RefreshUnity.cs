@@ -52,8 +52,11 @@ namespace MCPForUnity.Editor.Tools
 
             try
             {
-                // Best-effort semantics: if_dirty currently behaves like force unless future dirty signals are added.
-                bool shouldRefresh = string.Equals(mode, "force", StringComparison.OrdinalIgnoreCase)
+                // force reimports every asset (ForceUpdate); if_dirty lets the AssetDatabase
+                // import only what changed on disk, which on a large project is the difference
+                // between seconds and many minutes.
+                bool forceReimport = string.Equals(mode, "force", StringComparison.OrdinalIgnoreCase);
+                bool shouldRefresh = forceReimport
                                      || string.Equals(mode, "if_dirty", StringComparison.OrdinalIgnoreCase);
 
                 if (shouldRefresh)
@@ -65,7 +68,9 @@ namespace MCPForUnity.Editor.Tools
                     }
                     else
                     {
-                        AssetDatabase.Refresh(ImportAssetOptions.ForceUpdate | ImportAssetOptions.ForceSynchronousImport);
+                        AssetDatabase.Refresh(forceReimport
+                            ? ImportAssetOptions.ForceUpdate | ImportAssetOptions.ForceSynchronousImport
+                            : ImportAssetOptions.ForceSynchronousImport);
                         refreshTriggered = true;
                     }
                 }
