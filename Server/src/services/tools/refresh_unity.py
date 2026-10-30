@@ -199,7 +199,7 @@ async def verify_edit_by_sha(
 async def refresh_unity(
     ctx: Context,
     mode: Annotated[Literal["if_dirty", "force"],
-                    "Refresh mode: if_dirty imports only changed assets; force reimports every asset"] = "if_dirty",
+                    "Refresh mode: if_dirty imports only changed assets; force also reimports unchanged ones"] = "if_dirty",
     scope: Annotated[Literal["assets", "scripts", "all"],
                      "Refresh scope"] = "all",
     compile: Annotated[Literal["none", "request"],
