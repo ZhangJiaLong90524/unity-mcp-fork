@@ -198,7 +198,8 @@ async def verify_edit_by_sha(
 )
 async def refresh_unity(
     ctx: Context,
-    mode: Annotated[Literal["if_dirty", "force"], "Refresh mode"] = "if_dirty",
+    mode: Annotated[Literal["if_dirty", "force"],
+                    "Refresh mode: if_dirty imports only changed assets; force reimports every asset"] = "if_dirty",
     scope: Annotated[Literal["assets", "scripts", "all"],
                      "Refresh scope"] = "all",
     compile: Annotated[Literal["none", "request"],
@@ -231,7 +232,8 @@ async def refresh_unity(
     # readiness poll below, which then timed out against an editor that was never reached.
     # These reasons are raised before the command leaves the server, so re-sending cannot
     # cause the double reload of issue #577; the second send uses the hub's reconnect wait.
-    if _unreached_reason(response) is not None:
+    # wait_for_ready=False keeps its immediate retry hint instead of blocking on that wait.
+    if wait_for_ready and _unreached_reason(response) is not None:
         response = await unity_transport.send_with_unity_instance(
             _legacy_conn.async_send_command_with_retry,
             unity_instance,
@@ -240,15 +242,19 @@ async def refresh_unity(
             retry_on_reload=True,
         )
         if _unreached_reason(response) is not None:
+            available = await _connected_instance_ids(ctx)
+            # The target may still be mid-reload past the reconnect wait, so only point at
+            # selection when other instances are actually connected.
             return MCPResponse(
                 success=False,
-                error=f"Unity instance {unity_instance or '(default)'} is not connected to this server; "
-                      "the refresh was not sent.",
-                hint="select_instance",
+                error=f"No plugin session for Unity instance {unity_instance or '(default)'} after "
+                      "waiting for it to reconnect; the refresh was not sent. The editor may be "
+                      "closed, still reloading, or connected to a different server.",
+                hint="select_instance" if available else "retry",
                 data={
                     "reason": "instance_not_connected",
                     "unity_instance": unity_instance,
-                    "available_instances": await _connected_instance_ids(ctx),
+                    "available_instances": available,
                 },
             )
 

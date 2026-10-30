@@ -52,9 +52,9 @@ namespace MCPForUnity.Editor.Tools
 
             try
             {
-                // force reimports every asset (ForceUpdate); if_dirty lets the AssetDatabase
-                // import only what changed on disk, which on a large project is the difference
-                // between seconds and many minutes.
+                // force adds ForceUpdate to reimport assets regardless of change; if_dirty lets
+                // the AssetDatabase import only what changed on disk, which keeps routine
+                // refreshes cheap on large projects.
                 bool forceReimport = string.Equals(mode, "force", StringComparison.OrdinalIgnoreCase);
                 bool shouldRefresh = forceReimport
                                      || string.Equals(mode, "if_dirty", StringComparison.OrdinalIgnoreCase);
