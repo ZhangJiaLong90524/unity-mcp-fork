@@ -10,12 +10,14 @@ from typing import Annotated, Any, Literal
 from fastmcp import Context
 from mcp.types import ToolAnnotations
 
+from core.config import config
 from models import MCPResponse
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
 import transport.unity_transport as unity_transport
 import transport.legacy.unity_connection as _legacy_conn
 from transport.legacy.unity_connection import _extract_response_reason
+from transport.plugin_hub import PluginHub
 from services.state.external_changes_scanner import external_changes_scanner
 import services.resources.editor_state as editor_state
 
@@ -59,6 +61,28 @@ async def wait_for_editor_ready(ctx: Context, timeout_s: float = 30.0) -> tuple[
         await asyncio.sleep(0.25)
 
     return (False, time.monotonic() - start)
+
+
+# PluginHub reasons for a command that never reached Unity: no session for the target,
+# or a session whose socket was already dead.
+_UNREACHED_REASONS = {"no_unity_session", "stale_connection"}
+
+
+def _unreached_reason(resp: Any) -> str | None:
+    success = resp.get("success", True) if isinstance(resp, dict) else getattr(resp, "success", True)
+    if success:
+        return None
+    reason = _extract_response_reason(resp)
+    return reason if reason in _UNREACHED_REASONS else None
+
+
+async def _connected_instance_ids(ctx: Context) -> list[str]:
+    try:
+        user_id = (await ctx.get_state("user_id")) if config.http_remote_hosted else None
+        sessions = (await PluginHub.get_sessions(user_id=user_id)).sessions
+        return sorted(f"{s.project}@{s.hash}" for s in sessions.values())
+    except Exception:
+        return []
 
 
 def is_reloading_rejection(resp: Any) -> bool:
@@ -174,7 +198,8 @@ async def verify_edit_by_sha(
 )
 async def refresh_unity(
     ctx: Context,
-    mode: Annotated[Literal["if_dirty", "force"], "Refresh mode"] = "if_dirty",
+    mode: Annotated[Literal["if_dirty", "force"],
+                    "Refresh mode: if_dirty imports only changed assets; force also reimports unchanged ones"] = "if_dirty",
     scope: Annotated[Literal["assets", "scripts", "all"],
                      "Refresh scope"] = "all",
     compile: Annotated[Literal["none", "request"],
@@ -201,6 +226,37 @@ async def refresh_unity(
         params,
         retry_on_reload=False,
     )
+
+    # retry_on_reload=False also skips the hub's wait for a plugin session, so a target that
+    # is momentarily between sessions came back as a generic retry and fell into the 60s
+    # readiness poll below, which then timed out against an editor that was never reached.
+    # These reasons are raised before the command leaves the server, so re-sending cannot
+    # cause the double reload of issue #577; the second send uses the hub's reconnect wait.
+    # wait_for_ready=False keeps its immediate retry hint instead of blocking on that wait.
+    if wait_for_ready and _unreached_reason(response) is not None:
+        response = await unity_transport.send_with_unity_instance(
+            _legacy_conn.async_send_command_with_retry,
+            unity_instance,
+            "refresh_unity",
+            params,
+            retry_on_reload=True,
+        )
+        if _unreached_reason(response) is not None:
+            available = await _connected_instance_ids(ctx)
+            # The target may still be mid-reload past the reconnect wait, so only point at
+            # selection when other instances are actually connected.
+            return MCPResponse(
+                success=False,
+                error=f"No plugin session for Unity instance {unity_instance or '(default)'} after "
+                      "waiting for it to reconnect; the refresh was not sent. The editor may be "
+                      "closed, still reloading, or connected to a different server.",
+                hint="select_instance" if available else "retry",
+                data={
+                    "reason": "instance_not_connected",
+                    "unity_instance": unity_instance,
+                    "available_instances": available,
+                },
+            )
 
     # Handle connection errors during refresh/compile gracefully.
     # Unity disconnects during domain reload, which is expected behavior - not a failure.
